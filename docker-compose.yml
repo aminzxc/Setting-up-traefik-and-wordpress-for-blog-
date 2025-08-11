@@ -1,0 +1,81 @@
+services:
+  traefik:
+    image: traefik:v2.11
+    command:
+      - "--log.level=WARN"
+      - "--providers.docker=true"
+      - "--api.dashboard=true"
+      - "--providers.docker.swarmMode=false"
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.http.address=:80"
+      - "--api=true"
+      - "--ping=true"
+      - "--accesslog=true"
+      - "--accesslog.bufferingsize=100"
+      - "--api.insecure=true"
+      - "--providers.docker.network=zabbix"
+    ports:
+      - "80:80"
+      - "8088:8080"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "/etc/localtime:/etc/localtime:ro"
+    networks:
+      - zabbix
+
+  blog_db:
+    image: mysql:8.0
+    container_name: blog_db
+    restart: always
+    environment:
+      MYSQL_DATABASE: blog
+      MYSQL_ROOT_PASSWORD: 123
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: 123
+    volumes:
+      - dbdata:/var/lib/mysql
+    command: '--default-authentication-plugin=mysql_native_password'
+    networks:
+      - zabbix
+
+  blog:
+    image: wordpress:latest
+    container_name: blog
+    working_dir: /var/www/html/blog
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.blog.rule=Host(`zabbix.otomob.ir`) && PathPrefix(`/blog`)"
+      - "traefik.http.routers.blog.entrypoints=http,https"
+      - "traefik.http.services.blog.loadbalancer.server.port=80"
+      - "traefik.http.middlewares.blog-xfp.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.blog-xfp.headers.customrequestheaders.X-Forwarded-Port=443"
+      - "traefik.http.routers.blog.middlewares=blog-xfp"
+    restart: always
+    environment:
+      WORDPRESS_DB_HOST: blog_db:3306
+      WORDPRESS_DB_USER: admin
+      WORDPRESS_DB_PASSWORD: 123
+      WORDPRESS_DB_NAME: blog
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', 'https://zabbix.otomob.ir/blog');
+        define('WP_SITEURL', 'https://zabbix.otomob.ir/blog');
+        define('FORCE_SSL_ADMIN', true);
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+        $$_SERVER['HTTPS'] = 'on';
+        $$_SERVER['SERVER_PORT'] = 443;
+              }
+    volumes:
+      - ./blog:/var/www/html
+    depends_on:
+      - blog_db
+    networks:
+      - zabbix
+
+
+networks:
+  zabbix:
+    external: true
+
+volumes:
+  dbdata:
